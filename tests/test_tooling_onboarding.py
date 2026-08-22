@@ -107,7 +107,7 @@ LONGRUN_ALLOWED_ROOTS = "{root}"
         self.assertTrue(result["fully_connected"])
         self.assertEqual(result["missing_components"], [])
 
-    def test_prompt_hook_emits_once_per_fingerprint(self) -> None:
+    def test_prompt_hook_repeats_until_fingerprint_is_dismissed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._git_project(root)
@@ -148,9 +148,90 @@ LONGRUN_ALLOWED_ROOTS = "{root}"
                 env=environment,
                 check=True,
             )
+            dismissed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "dismiss",
+                    "--cwd",
+                    str(root),
+                    "--session-id",
+                    "thread-1",
+                ],
+                text=True,
+                capture_output=True,
+                env=environment,
+                check=True,
+            )
+            third = subprocess.run(
+                command,
+                input=payload,
+                text=True,
+                capture_output=True,
+                env=environment,
+                check=True,
+            )
 
         self.assertIn("PROJECT TOOLING ONBOARDING AUDIT", first.stdout)
-        self.assertEqual(second.stdout, "")
+        self.assertIn("MANDATORY FIRST RESPONSE ACTION", first.stdout)
+        self.assertIn("PROJECT TOOLING ONBOARDING AUDIT", second.stdout)
+        self.assertIn("dismissed_fingerprint", json.loads(dismissed.stdout))
+        self.assertEqual(third.stdout, "")
+
+    def test_legacy_prompted_state_does_not_suppress_offer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            prompt_state = state / "prompts"
+            prompt_state.mkdir(parents=True)
+            (prompt_state / "019f57b4-fa48-7ed2-a414-9109e7e17dff.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "session_id": "019f57b4-fa48-7ed2-a414-9109e7e17dff",
+                        "project_root": None,
+                        "fingerprint": "legacy-fingerprint",
+                        "fully_connected": False,
+                        "prompted_fingerprint": "legacy-fingerprint",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            payload = json.dumps(
+                {
+                    "session_id": "019f57b4-fa48-7ed2-a414-9109e7e17dff",
+                    "working_directory": str(tooling_onboarding.HOME),
+                }
+            )
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "PROJECT_TOOLING_ONBOARDING_STATE_DIR": str(state),
+                    "CODEX_HOME": str(root / "codex-home"),
+                    "PROJECT_MEMORY_REGISTRY": str(root / "registry.json"),
+                    "CODEX_LONGRUN_LAUNCHER": str(root / "missing-longrun"),
+                    "LSP_MCP_ROUTER": str(root / "missing-lsp"),
+                }
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT),
+                    "hook",
+                    "--event",
+                    "user-prompt-submit",
+                ],
+                input=payload,
+                text=True,
+                capture_output=True,
+                env=environment,
+                check=True,
+            )
+
+        self.assertIn("PROJECT TOOLING ONBOARDING AUDIT", completed.stdout)
+        self.assertIn("No exact Git project root is selected", completed.stdout)
+        self.assertIn("LSP MCP, Project Memory, Longrun", completed.stdout)
+        self.assertIn("MANDATORY FIRST RESPONSE ACTION", completed.stdout)
 
 
 if __name__ == "__main__":

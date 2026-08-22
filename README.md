@@ -12,21 +12,25 @@ It covers:
 - exact Codex project trust;
 - local instruction and configuration files without silently committing them.
 
-Fully connected projects stay silent. Missing integrations are listed once and
-require confirmation before any mutation.
+Fully connected projects stay silent. Missing integrations are offered until
+the user confirms or explicitly declines, and require confirmation before any
+mutation.
 
 ## Behavior
 
 The plugin installs two reviewed lifecycle hooks:
 
 - `SessionStart` performs a read-only audit for new and resumed sessions;
-- `UserPromptSubmit` adds one model-visible onboarding instruction when the
-  audit fingerprint is incomplete and has not already been offered in that
-  thread.
+- `UserPromptSubmit` adds a model-visible onboarding instruction while the
+  audit fingerprint is incomplete and has not been explicitly dismissed in
+  that thread.
 
 Codex cannot ask a question before the first user message because no model turn
-exists yet. The offer therefore appears in the first response. A declined offer
-is not repeated for the same thread and audit fingerprint.
+exists yet. The offer therefore appears in the first response. Until tooling is
+connected or the user explicitly declines, the hook repeats the onboarding
+context so a model cannot silently skip it. A decline is stored for that thread
+and exact audit fingerprint; a later tooling-state change makes the offer
+eligible again.
 
 The audit never treats the user's home directory as one project or LSP
 workspace. A session started outside a Git project is asked to select an exact
@@ -124,7 +128,8 @@ python3 -m compileall -q skills tests
 ```
 
 The tests cover broad-root rejection, exact missing-component reporting,
-silence for fully connected projects, and once-per-fingerprint prompting.
+silence for fully connected projects, repeated prompting until confirmation or
+dismissal, and migration from the legacy offered-state format.
 
 ## Security model
 

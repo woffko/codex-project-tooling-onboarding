@@ -374,9 +374,14 @@ def _hook_context(result: dict[str, Any]) -> str:
     if result.get("needs_project_selection"):
         finding = "No exact Git project root is selected for this session."
         missing = "Project root selection"
+        scope = (
+            "After an exact root is selected, audit the applicable LSP MCP, Project Memory, "
+            "Longrun, and exact Codex project trust integrations.\n"
+        )
     else:
         finding = f"Project tooling audit for {result['project_root']} found missing integrations."
         missing = ", ".join(result.get("missing_components", []))
+        scope = ""
     details = []
     for component in result.get("components", []):
         if component.get("connected"):
@@ -386,12 +391,16 @@ def _hook_context(result: dict[str, Any]) -> str:
     detail_text = "\n".join(details)
     return (
         "PROJECT TOOLING ONBOARDING AUDIT\n"
-        f"{finding}\nMissing: {missing}.\n{detail_text}\n"
-        "Before making onboarding changes, ask the user one concise confirmation question that "
-        "lists the missing components. If the current user message already explicitly asks to "
+        f"{finding}\nMissing: {missing}.\n{scope}{detail_text}\n"
+        "MANDATORY FIRST RESPONSE ACTION: before starting the user's requested task, ask one concise "
+        "confirmation question that lists the missing components. Do not skip this question merely "
+        "because the user did not mention onboarding; asking is not a mutation. Wait for the user's "
+        "answer before substantive work. If the current user message already explicitly asks to "
         "connect/install/enable/configure this tooling, treat it as confirmation and use the "
-        "project-tooling-onboarding skill immediately. If the user declines, continue the original "
-        "task without asking again in this thread. Do not mutate anything merely because this hook ran."
+        "project-tooling-onboarding skill immediately. If the user explicitly declines, follow the "
+        "skill's dismiss flow and then continue the original task. Until connected or dismissed, this "
+        "context will be repeated so a model cannot silently lose the offer. Do not mutate anything "
+        "merely because this hook ran."
     )
 
 
@@ -425,21 +434,43 @@ def run_hook(event: str) -> int:
         "fully_connected": result.get("fully_connected"),
     }
     if event == "session-start":
-        if previous.get("prompted_fingerprint"):
-            state["prompted_fingerprint"] = previous["prompted_fingerprint"]
+        if previous.get("dismissed_fingerprint"):
+            state["dismissed_fingerprint"] = previous["dismissed_fingerprint"]
         _write_state(state_path, state)
         return 0
 
     if result.get("fully_connected"):
         _write_state(state_path, state)
         return 0
-    if previous.get("prompted_fingerprint") == fingerprint:
+    if previous.get("dismissed_fingerprint") == fingerprint:
         return 0
 
-    state["prompted_fingerprint"] = fingerprint
+    if previous.get("dismissed_fingerprint"):
+        state["dismissed_fingerprint"] = previous["dismissed_fingerprint"]
     _write_state(state_path, state)
     print(_hook_context(result))
     return 0
+
+
+def dismiss(cwd: Path | None, session_id: str | None) -> dict[str, Any]:
+    result = audit(cwd, session_id)
+    fingerprint = _fingerprint(result)
+    state_path = _session_state_path(session_id, cwd)
+    state = {
+        "schema_version": SCHEMA_VERSION,
+        "session_id": session_id,
+        "project_root": result.get("project_root"),
+        "fingerprint": fingerprint,
+        "fully_connected": result.get("fully_connected"),
+        "dismissed_fingerprint": fingerprint,
+    }
+    _write_state(state_path, state)
+    return {
+        "session_id": session_id,
+        "project_root": result.get("project_root"),
+        "dismissed_fingerprint": fingerprint,
+        "state_path": str(state_path),
+    }
 
 
 def main() -> None:
@@ -453,9 +484,16 @@ def main() -> None:
     hook_parser.add_argument(
         "--event", choices=("session-start", "user-prompt-submit"), required=True
     )
+    dismiss_parser = subparsers.add_parser("dismiss")
+    dismiss_parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    dismiss_parser.add_argument("--session-id", required=True)
     arguments = parser.parse_args()
     if arguments.command == "hook":
         raise SystemExit(run_hook(arguments.event))
+    if arguments.command == "dismiss":
+        cwd = _canonical_directory(arguments.cwd)
+        print(json.dumps(dismiss(cwd, arguments.session_id), indent=2))
+        return
     cwd = _canonical_directory(arguments.cwd)
     result = audit(cwd, arguments.session_id)
     if arguments.json:

@@ -15,17 +15,30 @@ Resolve `scripts/tooling_onboarding.py` relative to this skill directory. The
 audit is read-only and treats `/home`, the user home, and other broad parents as
 non-project roots.
 
-## Offer once, then act on confirmation
+## Offer until resolved, then act on confirmation
 
 - If `fully_connected` is true, do not mention onboarding.
+- If no exact project root is selected, explain that project-scoped tooling
+  cannot be audited safely yet and ask whether to identify the root and then
+  audit/connect the applicable LSP MCP, Project Memory, Longrun, and exact
+  Codex trust components. Never enroll the whole home directory.
 - If integrations are missing and the current user message does not already
   authorize connecting them, list the exact missing components and ask one
   concise yes/no question before other mutations.
 - If the current user message explicitly asks to connect, install, enable, or
   configure the tooling, treat it as confirmation and proceed without asking
   again.
-- A decline applies to the current thread audit fingerprint. Continue the
-  user's original task without repeatedly offering.
+- If the user declines, record that exact thread/audit fingerprint before
+  continuing so the hook remains silent until the tooling state changes:
+
+  ```bash
+  python3 scripts/tooling_onboarding.py dismiss \
+    --cwd /absolute/project/root-or-current-cwd \
+    --session-id SESSION_ID
+  ```
+
+  Resolve the script relative to this skill. Do not dismiss merely because the
+  model chose to ignore the offer.
 - Never mutate a repository, global config, Project Memory registry, or secret
   store merely because a hook ran.
 
