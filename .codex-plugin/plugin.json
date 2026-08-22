@@ -1,0 +1,35 @@
+{
+  "name": "project-tooling-onboarding",
+  "version": "0.1.0+codex.20260822104838",
+  "description": "Audit project-scoped Codex tooling and offer guarded onboarding only when integrations are missing.",
+  "author": {
+    "name": "woffko",
+    "url": "https://github.com/woffko"
+  },
+  "homepage": "https://github.com/woffko/codex-project-tooling-onboarding",
+  "repository": "https://github.com/woffko/codex-project-tooling-onboarding",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "hooks",
+    "lsp",
+    "project-memory",
+    "longrun",
+    "onboarding"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Project Tooling Onboarding",
+    "shortDescription": "Offer LSP, Project Memory, and Longrun setup only when a project needs it",
+    "longDescription": "Audits the exact project root at session start and prompt submission. Missing project-scoped LSP MCP, Project Memory, Longrun, or trust is presented once for confirmation; fully configured projects remain silent.",
+    "developerName": "woffko",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Audit and connect this project's Codex tooling"
+    ]
+  }
+}

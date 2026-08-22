@@ -1,0 +1,26 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'exec python3 \"$HOME/plugins/project-tooling-onboarding/skills/project-tooling-onboarding/scripts/tooling_onboarding.py\" hook --event session-start'",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh -c 'exec python3 \"$HOME/plugins/project-tooling-onboarding/skills/project-tooling-onboarding/scripts/tooling_onboarding.py\" hook --event user-prompt-submit'",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
