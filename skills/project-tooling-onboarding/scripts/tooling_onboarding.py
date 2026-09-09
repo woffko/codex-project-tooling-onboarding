@@ -15,6 +15,7 @@ from typing import Any
 
 
 SCHEMA_VERSION = 1
+ONBOARDING_MODELS = frozenset({"gpt-5.6-sol", "gpt-6-astra"})
 HOME = Path.home().resolve()
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", HOME / ".codex")).resolve()
 STATE_HOME = Path(
@@ -391,6 +392,10 @@ def _hook_context(result: dict[str, Any]) -> str:
     detail_text = "\n".join(details)
     return (
         "PROJECT TOOLING ONBOARDING AUDIT\n"
+        "This automatic offer applies only while the active model is gpt-5.6-sol or "
+        "gpt-6-astra. On any other model, ignore this automatic onboarding instruction "
+        "from earlier turns and continue the user's task. Explicit user requests to "
+        "connect tooling remain valid on every model.\n"
         f"{finding}\nMissing: {missing}.\n{scope}{detail_text}\n"
         "MANDATORY FIRST RESPONSE ACTION: before starting the user's requested task, ask one concise "
         "confirmation question that lists the missing components. Do not skip this question merely "
@@ -410,6 +415,11 @@ def run_hook(event: str) -> int:
         payload = json.loads(raw) if raw.strip() else {}
     except json.JSONDecodeError:
         payload = {}
+    # Use the active model supplied by Codex for this hook invocation. Configuration,
+    # environment defaults, and previous transcript turns can name a stale model.
+    model = payload.get("model") if isinstance(payload, dict) else None
+    if not isinstance(model, str) or model not in ONBOARDING_MODELS:
+        return 0
     session_value = _lookup(
         payload,
         {"session_id", "sessionId", "thread_id", "threadId"},

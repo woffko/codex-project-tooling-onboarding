@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -113,7 +114,8 @@ LONGRUN_ALLOWED_ROOTS = "{root}"
             self._git_project(root)
             state = root / "state"
             payload = json.dumps(
-                {"session_id": "thread-1", "working_directory": str(root)}
+                {"session_id": "thread-1", "working_directory": str(root),
+                 "model": "gpt-5.6-sol"}
             )
             environment = dict(os.environ)
             environment.update(
@@ -201,6 +203,7 @@ LONGRUN_ALLOWED_ROOTS = "{root}"
                 {
                     "session_id": "019f57b4-fa48-7ed2-a414-9109e7e17dff",
                     "working_directory": str(tooling_onboarding.HOME),
+                    "model": "gpt-6-astra",
                 }
             )
             environment = dict(os.environ)
@@ -232,6 +235,45 @@ LONGRUN_ALLOWED_ROOTS = "{root}"
         self.assertIn("No exact Git project root is selected", completed.stdout)
         self.assertIn("LSP MCP, Project Memory, Longrun", completed.stdout)
         self.assertIn("MANDATORY FIRST RESPONSE ACTION", completed.stdout)
+
+    def test_other_and_unknown_models_skip_audit_and_state(self) -> None:
+        payloads = [
+            {"model": model} for model in (
+                "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.5", "gpt-6",
+                "other-gpt-6-astra", "gpt-6-astra-other", "", None, [], {},
+            )
+        ] + [{}, [], {"data": {"model": "gpt-6-astra"}}]
+        for event in ("session-start", "user-prompt-submit"):
+            for payload in payloads:
+                with self.subTest(event=event, payload=payload), patch.object(
+                    sys, "stdin", io.StringIO(json.dumps(payload))
+                ), patch.object(sys, "stdout", new_callable=io.StringIO) as output, patch.object(
+                    tooling_onboarding, "audit"
+                ) as audit, patch.object(tooling_onboarding, "_write_state") as write_state:
+                    self.assertEqual(tooling_onboarding.run_hook(event), 0)
+                    self.assertEqual(output.getvalue(), "")
+                    audit.assert_not_called()
+                    write_state.assert_not_called()
+
+    def test_model_switches_do_not_dismiss_allowed_model_offers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            tooling_onboarding, "STATE_HOME", Path(directory) / "state"
+        ), patch.object(tooling_onboarding, "audit", return_value={
+            "project_root": None, "needs_project_selection": True,
+            "fully_connected": False, "missing_components": ["Project root selection"],
+        }):
+            for model, should_offer in (
+                ("gpt-5.6-luna", False), ("gpt-5.6-sol", True),
+                ("gpt-5.6-terra", False), ("gpt-6-astra", True),
+            ):
+                payload = {"model": model, "session_id": "switch-test", "cwd": directory}
+                with self.subTest(model=model), patch.object(
+                    sys, "stdin", io.StringIO(json.dumps(payload))
+                ), patch.object(sys, "stdout", new_callable=io.StringIO) as output:
+                    self.assertEqual(tooling_onboarding.run_hook("user-prompt-submit"), 0)
+                    self.assertEqual("PROJECT TOOLING ONBOARDING AUDIT" in output.getvalue(), should_offer)
+            state_path = Path(directory) / "state/prompts/switch-test.json"
+            self.assertNotIn("dismissed_fingerprint", json.loads(state_path.read_text()))
 
 
 if __name__ == "__main__":

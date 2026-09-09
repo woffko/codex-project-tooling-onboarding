@@ -18,7 +18,18 @@ mutation.
 
 ## Behavior
 
-The plugin installs two reviewed lifecycle hooks:
+Automatic offers are enabled only for `gpt-5.6-sol` and `gpt-6-astra`.
+Both hooks check the top-level `model` field supplied by Codex on each invocation,
+so switching models takes effect on the next hook call. Other models, missing
+model fields, and malformed model values produce no output and skip the audit
+and prompt-state writes. Suppression does not record a user decline.
+The hooks never infer the active model from configuration defaults or old
+transcript entries. See the official [hook input documentation](https://learn.chatgpt.com/docs/hooks#common-input-fields).
+
+Explicit user requests to audit or connect tooling remain available on every
+model through the skill and the `audit` command.
+
+For the two eligible models, the plugin installs two reviewed lifecycle hooks:
 
 - `SessionStart` performs a read-only audit for new and resumed sessions;
 - `UserPromptSubmit` adds a model-visible onboarding instruction while the
@@ -129,7 +140,8 @@ python3 -m compileall -q skills tests
 
 The tests cover broad-root rejection, exact missing-component reporting,
 silence for fully connected projects, repeated prompting until confirmation or
-dismissal, and migration from the legacy offered-state format.
+dismissal, migration from the legacy offered-state format, model filtering, and
+switching between eligible and ineligible models in the same thread.
 
 ## Security model
 

@@ -1,6 +1,6 @@
 {
   "name": "project-tooling-onboarding",
-  "version": "0.1.0+codex.20260822183200",
+  "version": "0.1.0+codex.20260908114552",
   "description": "Audit project-scoped Codex tooling and offer guarded onboarding only when integrations are missing.",
   "author": {
     "name": "woffko",
