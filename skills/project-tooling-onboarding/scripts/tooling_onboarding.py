@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shlex
 from pathlib import Path
 import subprocess
@@ -17,6 +18,18 @@ from typing import Any
 
 SCHEMA_VERSION = 1
 ONBOARDING_MODELS = frozenset({"gpt-5.6-sol", "gpt-6-astra"})
+LSP_CHOICES = (
+    ("clangd", "C/C++ (including CUDA)", "clangd: navigation and diagnostics; accurate build flags require compile_commands.json"),
+    ("basedpyright", "Python", "basedpyright: type checking, navigation, and import diagnostics"),
+    ("typescript", "JavaScript/TypeScript", "typescript-language-server: JS, JSX, TS, and TSX navigation and diagnostics"),
+    ("rust", "Rust", "rust-analyzer: Cargo-aware navigation and diagnostics"),
+    ("dart", "Dart/Flutter", "Dart language server: Dart and Flutter code navigation and diagnostics"),
+    ("shader", "HLSL", "shader-language-server: HLSL shader support"),
+    ("glsl", "GLSL", "glsl_analyzer: GLSL shader support"),
+    ("wgsl", "WGSL", "wgsl-analyzer: WebGPU shader support"),
+)
+
+
 HOME = Path.home().resolve()
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", HOME / ".codex")).resolve()
 STATE_HOME = Path(
@@ -51,6 +64,47 @@ IGNORED_DIRS = {
     "staging_dir",
     "build_dir",
 }
+
+
+def lsp_selection_prompt() -> str:
+    lines = ["Which LSP backends should this project use?"]
+    lines.extend(f"{index}. {language} — {description}" for index, (_, language, description) in enumerate(LSP_CHOICES, 1))
+    lines.extend(["0. Do not connect LSP for this project.",
+                  "Reply with numbers in any order, separated by spaces or commas (for example: 4 1 3).",
+                  "Recommended general-purpose set: 1 2 3 4. No set is selected without your answer."])
+    return "\n".join(lines)
+
+
+def parse_lsp_selection(answer: str) -> list[str]:
+    parts = [part for part in re.split(r"[\s,;]+", answer.strip()) if part]
+    if not parts or any(not re.fullmatch(r"[0-8]", value) for value in parts):
+        raise ValueError("Use backend numbers 1-8 separated by spaces or commas, or 0 alone to skip LSP.")
+    selected = {int(value) for value in parts}
+    if 0 in selected and selected != {0}:
+        raise ValueError("0 means no LSP and cannot be combined with other backend numbers.")
+    return [backend for index, (backend, _, _) in enumerate(LSP_CHOICES, 1) if index in selected]
+
+
+def init_lsp(cwd: Path, answer: str) -> dict[str, Any]:
+    """Create only an absent manifest after an explicit numbered selection."""
+    backends = parse_lsp_selection(answer)
+    root = _git_root(_canonical_directory(cwd))
+    if root is None:
+        raise ValueError("init-lsp requires an exact Git project, not a broad parent")
+    target = root / ".lsp-mcp.toml"
+    manifest = 'schema_version = 1\n\n[project]\nworkspace = "."\n'
+    if not backends:
+        manifest += '\n[backends]\n'
+    for backend in backends:
+        manifest += f'\n[backends.{backend}]\nenabled = true\nrequired = false\n'
+    try:
+        with target.open("x", encoding="utf-8") as stream:
+            stream.write(manifest)
+    except FileExistsError:
+        return {"created": False, "manifest": str(target), "existing_configuration_preserved": True}
+    return {"created": True, "manifest": str(target), "selected_backends": backends,
+            "lsp_skipped": not backends,
+            "next_step": "Verify selected host servers and connect the project-local LSP MCP; the manifest alone is not a live connection."}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -227,6 +281,8 @@ def print_audit(result: dict[str, Any]) -> None:
     else:
         print(f"Project: {result.get('project_root') or '<not selected>'}")
         print("Missing: " + ", ".join(result.get("missing_components", [])))
+    if result.get("lsp_selection_prompt"):
+        print(result["lsp_selection_prompt"])
     if result.get("launch_command"):
         if not result.get("fully_connected"):
             print("After connecting the missing tooling:")
@@ -254,25 +310,32 @@ def audit(cwd: Path | None, session_id: str | None = None) -> dict[str, Any]:
     local_config = _load_toml(local_config_path)
     global_config = _load_toml(CODEX_HOME / "config.toml")
     backends, scan_capped = _detect_backends(root)
+    manifest_exists = manifest_path.is_file()
+    manifest = _load_toml(manifest_path) if manifest_exists else {}
+    configured = manifest.get("backends", {})
+    selected_backends = [name for name, value in configured.items()
+                         if isinstance(value, dict) and value.get("enabled") is True] if isinstance(configured, dict) else []
+    selection_required = not manifest_exists
 
     local_servers = local_config.get("mcp_servers", {})
     if not isinstance(local_servers, dict):
         local_servers = {}
-    lsp_server = local_servers.get("lsp_mcpls", {})
-    lsp_connected = not backends or (
-        manifest_path.is_file()
-        and isinstance(lsp_server, dict)
-        and lsp_server.get("enabled", True) is not False
-        and LSP_ROUTER.is_file()
-    )
+    lsp_server = local_servers.get("lsp_mcpls")
     lsp_missing: list[str] = []
-    if backends:
-        if not manifest_path.is_file():
-            lsp_missing.append("portable .lsp-mcp.toml")
+    if selection_required:
+        lsp_missing.extend(["LSP backend selection (numbered choices)", "portable .lsp-mcp.toml"])
+    elif manifest.get("schema_version") != 1:
+        lsp_missing.append("valid .lsp-mcp.toml with schema_version = 1")
+    elif not isinstance(configured, dict) or any(
+        not isinstance(value, dict) or type(value.get("enabled", False)) is not bool for value in configured.values()
+    ):
+        lsp_missing.append("valid backend settings in .lsp-mcp.toml")
+    if selected_backends or selection_required:
         if not isinstance(lsp_server, dict) or lsp_server.get("enabled", True) is False:
             lsp_missing.append("local lsp_mcpls server")
         if not LSP_ROUTER.is_file():
             lsp_missing.append("installed lsp-mcp router")
+    lsp_connected = not lsp_missing
 
     projects = _memory_projects(root)
     keys = sorted(
@@ -317,8 +380,10 @@ def audit(cwd: Path | None, session_id: str | None = None) -> dict[str, Any]:
             "LSP MCP",
             lsp_connected,
             lsp_missing,
-            applicable=bool(backends),
+            applicable=selection_required or bool(selected_backends) or bool(lsp_missing),
             detected_backends=backends,
+            selected_backends=selected_backends,
+            selection_required=selection_required,
             scan_capped=scan_capped,
         ),
         _component(
@@ -353,6 +418,7 @@ def audit(cwd: Path | None, session_id: str | None = None) -> dict[str, Any]:
         "components": components,
         "local_config": str(local_config_path),
         "portable_manifest": str(manifest_path),
+        "lsp_selection_prompt": lsp_selection_prompt() if selection_required else None,
         **launch_commands(root, session_id),
     }
 
@@ -407,6 +473,12 @@ def _hook_context(result: dict[str, Any]) -> str:
         reasons = "; ".join(component.get("missing", [])) or "not connected"
         details.append(f"- {component['name']}: {reasons}")
     detail_text = "\n".join(details)
+    selection = result.get("lsp_selection_prompt")
+    if selection:
+        detail_text += ("\nAfter onboarding is authorized, ask one free-text question with the numbered "
+                        "LSP list below (translate it into the user's language). Wait for their numbers; "
+                        "do not infer a selection from detected files or the recommended set. An explicit "
+                        "selection already given for this project does not need to be asked again.\n" + selection)
     return (
         "PROJECT TOOLING ONBOARDING AUDIT\n"
         "This automatic offer applies only while the active model is gpt-5.6-sol or "
@@ -507,6 +579,10 @@ def main() -> None:
     audit_parser.add_argument("--cwd", type=Path, default=Path.cwd())
     audit_parser.add_argument("--session-id", default=os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID"))
     audit_parser.add_argument("--json", action="store_true")
+    subparsers.add_parser("lsp-options", help="Print the numbered LSP selection question")
+    init_parser = subparsers.add_parser("init-lsp", help="After confirmation, create a missing manifest for the chosen backend numbers")
+    init_parser.add_argument("--cwd", type=Path, required=True)
+    init_parser.add_argument("--selection", required=True, help="Numbers in any order, e.g. '4 1 3', or '0' to skip")
     hook_parser = subparsers.add_parser("hook")
     hook_parser.add_argument(
         "--event", choices=("session-start", "user-prompt-submit"), required=True
@@ -515,6 +591,15 @@ def main() -> None:
     dismiss_parser.add_argument("--cwd", type=Path, default=Path.cwd())
     dismiss_parser.add_argument("--session-id", required=True)
     arguments = parser.parse_args()
+    if arguments.command == "lsp-options":
+        print(lsp_selection_prompt())
+        return
+    if arguments.command == "init-lsp":
+        try:
+            print(json.dumps(init_lsp(arguments.cwd, arguments.selection), indent=2))
+        except ValueError as exc:
+            parser.error(str(exc))
+        return
     if arguments.command == "hook":
         raise SystemExit(run_hook(arguments.event))
     if arguments.command == "dismiss":

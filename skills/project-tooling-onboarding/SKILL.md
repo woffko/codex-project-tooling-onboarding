@@ -56,7 +56,40 @@ non-project roots.
 
 ### LSP MCP
 
-- Enable only backends supported by the project and installed host profile.
+- Before the first LSP setup, ask which backends the user wants. Do not select
+  automatically from source files or from a default preset. If the user already
+  gave an explicit selection for this project, use it without asking again.
+- Obtain the full numbered question from the audit's `lsp_selection_prompt` or:
+
+  ```bash
+  python3 scripts/tooling_onboarding.py lsp-options
+  ```
+
+  Present it in the user's language, retaining the numbers, backend names, and
+  language descriptions. Recommend `1 2 3 4` (C/C++, Python, JavaScript/TypeScript,
+  Rust), but require an answer before configuring LSP. Ask one free-text question;
+  when `request_user_input_async` is available, put the numbered list in `title`
+  and omit `options`, so the user can enter multiple numbers together.
+- Accept numbers in any order, separated by spaces, commas, or semicolons;
+  duplicates are harmless. For example, `4 1 3` means Rust, C/C++, and
+  JavaScript/TypeScript. `0` alone means no LSP; do not mix it with other numbers.
+  Clarify invalid numbers rather than guessing. Silence is not a selection.
+- After onboarding authorization and the user's selection, initialize a missing
+  portable manifest with those numbers:
+
+  ```bash
+  python3 scripts/tooling_onboarding.py init-lsp \
+    --cwd "/absolute/project/root" --selection "4 1 3"
+  ```
+
+  This creates only the chosen backend entries. It preserves an existing
+  manifest, and `0` records an empty backend selection without connecting LSP.
+  Keep existing settings unless the user explicitly requests a change; merge
+  such changes without replacing workspace roots, build flags, or exclusions.
+- Check that each selected backend is supported by the installed router and
+  host profile. Identify missing prerequisites before reporting a connection;
+  do not silently substitute or omit a selected backend. Selection authorizes
+  only the applicable onboarding steps, not unrelated host or trust changes.
 - Keep one portable `.lsp-mcp.toml` with relative, in-repository workspace
   paths. Large monorepos require narrow roots; never index the whole home.
 - Merge the read-only `lsp_mcpls` table into the ignored local
@@ -66,6 +99,8 @@ non-project roots.
   instruction that it replaces.
 - Verify each enabled language with a real read-only semantic MCP call. A
   successful executable check, build, or lexical search is not semantic proof.
+  In an empty project, distinguish configured backends and verified server
+  initialization from semantic checks that must wait for real source files.
 
 ### Project Memory
 

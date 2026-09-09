@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -131,6 +132,64 @@ LONGRUN_ALLOWED_ROOTS = "{root}"
     def test_missing_project_does_not_invent_a_launch_target(self) -> None:
         result = tooling_onboarding.audit(tooling_onboarding.HOME)
         self.assertFalse(result.get("launch_command"))
+
+    def test_numbered_choices_accept_any_order_and_duplicates(self) -> None:
+        self.assertEqual(tooling_onboarding.parse_lsp_selection("4 1 3"), ["clangd", "typescript", "rust"])
+        self.assertEqual(tooling_onboarding.parse_lsp_selection("2,4"), ["basedpyright", "rust"])
+        self.assertEqual(tooling_onboarding.parse_lsp_selection("4,1,3,"), ["clangd", "typescript", "rust"])
+        self.assertEqual(tooling_onboarding.parse_lsp_selection("4;1; 4 3"), ["clangd", "typescript", "rust"])
+        self.assertEqual(tooling_onboarding.parse_lsp_selection("8 7 6 5"), ["dart", "shader", "glsl", "wgsl"])
+        self.assertEqual(tooling_onboarding.parse_lsp_selection("0"), [])
+
+    def test_invalid_selection_never_writes_a_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._git_project(root)
+            for answer in ("", "0 1", "9", "-1", "1-4", "yes", "1; $(invalid)"):
+                with self.subTest(answer=answer), self.assertRaises(ValueError):
+                    tooling_onboarding.init_lsp(root, answer)
+                self.assertFalse((root / ".lsp-mcp.toml").exists())
+
+    def test_empty_project_requires_selection_and_only_chosen_backends_are_written(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "new project"
+            root.mkdir()
+            self._git_project(root)
+            before = tooling_onboarding.audit(root)
+            lsp = before["components"][0]
+            self.assertFalse(lsp["connected"])
+            self.assertTrue(lsp["details"]["selection_required"])
+            self.assertEqual(lsp["details"]["detected_backends"], [])
+            self.assertIn("1. C/C++", before["lsp_selection_prompt"])
+            self.assertIn("4. Rust", tooling_onboarding._hook_context(before))
+            result = tooling_onboarding.init_lsp(root, "4,1,3")
+            manifest = tomllib.loads((root / ".lsp-mcp.toml").read_text())
+            self.assertTrue(result["created"])
+            self.assertEqual(set(manifest["backends"]), {"clangd", "typescript", "rust"})
+            self.assertTrue(all(x["enabled"] is True for x in manifest["backends"].values()))
+            after = tooling_onboarding.audit(root)
+            self.assertIsNone(after["lsp_selection_prompt"])
+            self.assertIn("local lsp_mcpls server", after["components"][0]["missing"])
+
+    def test_existing_manifest_is_preserved_and_zero_is_respected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._git_project(root)
+            (root / "app.py").write_text("pass\n")
+            result = tooling_onboarding.init_lsp(root, "0")
+            self.assertTrue(result["lsp_skipped"])
+            original = (root / ".lsp-mcp.toml").read_bytes()
+            second = tooling_onboarding.init_lsp(root, "1 2 3 4")
+            self.assertTrue(second["existing_configuration_preserved"])
+            self.assertEqual((root / ".lsp-mcp.toml").read_bytes(), original)
+            audit = tooling_onboarding.audit(root)
+            self.assertTrue(audit["components"][0]["connected"])
+            self.assertFalse(audit["components"][0]["details"]["applicable"])
+            self.assertIsNone(audit["lsp_selection_prompt"])
+
+    def test_lsp_initializer_rejects_broad_root(self) -> None:
+        with self.assertRaisesRegex(ValueError, "exact Git project"):
+            tooling_onboarding.init_lsp(tooling_onboarding.HOME, "1 2 3 4")
 
     def test_prompt_hook_repeats_until_fingerprint_is_dismissed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

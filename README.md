@@ -49,16 +49,41 @@ project root first.
 
 ## LSP selection
 
-The plugin does not install a default bundle of language servers. Its audit
-detects candidate backends from source-file extensions: C/C++ maps to `clangd`,
-Python to `basedpyright`, JavaScript/TypeScript to `typescript`, Rust to `rust`,
-and Dart to `dart`. These are detector names, not a guarantee that the installed
-LSP MCP supports or has configured every backend.
+After onboarding authorization, the agent asks one free-text question with
+numbered backend choices and descriptions, in the user's language:
 
-After authorized onboarding, enable only the candidates supported by both the
-project and the installed host profile, then verify them with real semantic
-queries. An empty project does not select a default LSP. Unsupported languages
-require an explicit lexical fallback.
+1. C/C++ and CUDA — `clangd`.
+2. Python — `basedpyright`.
+3. JavaScript/TypeScript, including JSX/TSX — `typescript`.
+4. Rust — `rust` (`rust-analyzer`).
+5. Dart/Flutter — `dart`.
+6. HLSL — `shader` (`shader-language-server`).
+7. GLSL — `glsl` (`glsl_analyzer`).
+8. WGSL — `wgsl` (`wgsl-analyzer`).
+
+Reply with numbers in any order: `4 1 3`, `2, 4`, and `4; 1; 3` are valid.
+Duplicates are ignored. `0` alone skips LSP for this project. The recommended
+general-purpose set is `1 2 3 4`, but it is never selected without the user's
+answer. An existing explicit selection is not asked again. This also applies to
+new empty projects; detected source languages are hints, not authorization.
+
+Print the full selection question or apply the user's answer:
+
+```bash
+python3 skills/project-tooling-onboarding/scripts/tooling_onboarding.py lsp-options
+python3 skills/project-tooling-onboarding/scripts/tooling_onboarding.py \
+  init-lsp --cwd "/absolute/path/to/project" --selection "4 1 3"
+```
+
+`init-lsp` requires a selection, creates only an absent `.lsp-mcp.toml`, and
+never overwrites existing configuration. `0` records an empty backend selection
+so later audits respect that choice. The command does not install host servers,
+connect the local MCP entry, or grant trust; those remain part of authorized
+onboarding. Selected servers must be supported and available in the host profile.
+Report missing prerequisites instead of silently dropping a selected backend.
+Verify real semantic behavior where source files exist; for empty projects,
+report configuration and server initialization separately from deferred semantic
+checks. Fully configured existing projects retain their previous selection.
 
 ## Prerequisites
 
