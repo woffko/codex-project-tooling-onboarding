@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -107,6 +108,29 @@ LONGRUN_ALLOWED_ROOTS = "{root}"
 
         self.assertTrue(result["fully_connected"])
         self.assertEqual(result["missing_components"], [])
+        self.assertEqual(shlex.split(result["resume_command"]),
+                         [str(launcher), "resume", "-C", str(root), "--", "thread"])
+        with patch.object(sys, "stdout", new_callable=io.StringIO) as output:
+            tooling_onboarding.print_audit(result)
+        self.assertIn(result["resume_command"], output.getvalue())
+        self.assertIn("Close the current Codex process", output.getvalue())
+
+    def test_launch_commands_preserve_shell_sensitive_paths_and_session_ids(self) -> None:
+        root = Path("/tmp/project with spaces; $(not-a-command)")
+        launcher = Path("/tmp/tool directory/codex-longrun")
+        session = "--session; $(also-not-a-command)"
+        with patch.object(tooling_onboarding, "LONGRUN_LAUNCHER", launcher):
+            known = tooling_onboarding.launch_commands(root, session)
+            new = tooling_onboarding.launch_commands(root)
+        self.assertEqual(shlex.split(known["launch_command"]),
+                         [str(launcher), "resume", "-C", str(root), "--", session])
+        self.assertEqual(shlex.split(new["launch_command"]), [str(launcher), "-C", str(root)])
+        self.assertEqual(new["launch_command"], new["start_command"])
+        self.assertIsNone(new["resume_command"])
+
+    def test_missing_project_does_not_invent_a_launch_target(self) -> None:
+        result = tooling_onboarding.audit(tooling_onboarding.HOME)
+        self.assertFalse(result.get("launch_command"))
 
     def test_prompt_hook_repeats_until_fingerprint_is_dismissed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -213,6 +214,26 @@ def _component(name: str, connected: bool, missing: list[str], **details: Any) -
     }
 
 
+def launch_commands(root: Path, session_id: str | None = None) -> dict[str, str | None]:
+    start = shlex.join([str(LONGRUN_LAUNCHER), "-C", str(root)])
+    resume = (shlex.join([str(LONGRUN_LAUNCHER), "resume", "-C", str(root), "--", session_id])
+              if session_id else None)
+    return {"start_command": start, "resume_command": resume, "launch_command": resume or start}
+
+
+def print_audit(result: dict[str, Any]) -> None:
+    if result.get("fully_connected"):
+        print(f"Project tooling is fully connected: {result.get('project_root')}")
+    else:
+        print(f"Project: {result.get('project_root') or '<not selected>'}")
+        print("Missing: " + ", ".join(result.get("missing_components", [])))
+    if result.get("launch_command"):
+        if not result.get("fully_connected"):
+            print("After connecting the missing tooling:")
+        print("Close the current Codex process, then launch this project through the Longrun bridge:")
+        print(result["launch_command"])
+
+
 def audit(cwd: Path | None, session_id: str | None = None) -> dict[str, Any]:
     root = _git_root(cwd)
     if root is None:
@@ -332,11 +353,7 @@ def audit(cwd: Path | None, session_id: str | None = None) -> dict[str, Any]:
         "components": components,
         "local_config": str(local_config_path),
         "portable_manifest": str(manifest_path),
-        "resume_command": (
-            f"{LONGRUN_LAUNCHER} resume -C {root} {session_id}"
-            if session_id
-            else None
-        ),
+        **launch_commands(root, session_id),
     }
 
 
@@ -488,7 +505,7 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
     audit_parser = subparsers.add_parser("audit")
     audit_parser.add_argument("--cwd", type=Path, default=Path.cwd())
-    audit_parser.add_argument("--session-id")
+    audit_parser.add_argument("--session-id", default=os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID"))
     audit_parser.add_argument("--json", action="store_true")
     hook_parser = subparsers.add_parser("hook")
     hook_parser.add_argument(
@@ -508,11 +525,8 @@ def main() -> None:
     result = audit(cwd, arguments.session_id)
     if arguments.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
-    elif result.get("fully_connected"):
-        print(f"Project tooling is fully connected: {result.get('project_root')}")
     else:
-        print(f"Project: {result.get('project_root') or '<not selected>'}")
-        print("Missing: " + ", ".join(result.get("missing_components", [])))
+        print_audit(result)
 
 
 if __name__ == "__main__":

@@ -47,6 +47,19 @@ The audit never treats the user's home directory as one project or LSP
 workspace. A session started outside a Git project is asked to select an exact
 project root first.
 
+## LSP selection
+
+The plugin does not install a default bundle of language servers. Its audit
+detects candidate backends from source-file extensions: C/C++ maps to `clangd`,
+Python to `basedpyright`, JavaScript/TypeScript to `typescript`, Rust to `rust`,
+and Dart to `dart`. These are detector names, not a guarantee that the installed
+LSP MCP supports or has configured every backend.
+
+After authorized onboarding, enable only the candidates supported by both the
+project and the installed host profile, then verify them with real semantic
+queries. An empty project does not select a default LSP. Unsupported languages
+require an explicit lexical fallback.
+
 ## Prerequisites
 
 - Codex CLI 0.149.0 or newer with stable plugins and hooks;
@@ -82,6 +95,20 @@ Install the marketplace entry and plugin:
 ```bash
 python3 scripts/install_personal.py --install
 ```
+
+The installer prints a bridge launch command after a successful installation.
+To include the exact project and a known session in that command, use:
+
+```bash
+python3 scripts/install_personal.py --install \
+  --project-root "/absolute/path/to/project" --session-id "SESSION_ID"
+```
+
+The session ID defaults to `CODEX_THREAD_ID`/`CODEX_SESSION_ID` when available.
+Without an ID, the installer prints a new-session command. Without
+`--project-root`, it prints a clearly marked project-path template; it never
+uses the plugin checkout as the target project. Installation alone does not
+enroll that project or install Longrun. The output identifies those prerequisites.
 
 Start Codex once. Its standard hook-review screen shows the exact
 `SessionStart` and `UserPromptSubmit` commands. Review and trust those hooks;
@@ -119,6 +146,29 @@ python3 skills/project-tooling-onboarding/scripts/tooling_onboarding.py \
 The result reports `fully_connected`, the detected LSP backends, exact missing
 components, Project Memory mappings, Longrun root coverage, and exact project
 trust.
+
+After project connection, run the final audit with the actual session ID:
+
+```bash
+python3 skills/project-tooling-onboarding/scripts/tooling_onboarding.py \
+  audit --cwd "/absolute/path/to/project" --session-id "SESSION_ID"
+```
+
+The human-readable output prints the shell-quoted bridge command. JSON output
+includes `start_command`, `resume_command`, and the selected `launch_command`.
+Paths with spaces and shell metacharacters are preserved. For example:
+
+```bash
+"$HOME/.local/share/codex-longrun-mcp/.venv/bin/codex-longrun" \
+  resume -C "/absolute/path/to/project" -- "SESSION_ID"
+```
+
+Close the old Codex process before running that command. Omit `resume` and the
+session ID for a new session. Ordinary `codex` does not start the Longrun bridge.
+The same launcher supports Goal and non-Goal continuation; see the
+[Longrun launch guide](https://github.com/woffko/codex-mcp-longrun#start-a-session-through-the-bridge).
+Fully connected projects remain silent in lifecycle hooks; the explicit final
+installation/onboarding response still includes the command.
 
 ## Update
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import tempfile
@@ -76,6 +77,20 @@ def atomic_write(path: Path, value: dict[str, Any]) -> None:
             os.unlink(temporary_name)
 
 
+def print_launch_handoff(project_root: Path | None, session_id: str | None) -> None:
+    launcher = Path(os.environ.get("CODEX_LONGRUN_LAUNCHER",
+                    Path.home() / ".local/share/codex-longrun-mcp/.venv/bin/codex-longrun")).expanduser()
+    root = str(project_root) if project_root else "/absolute/path/to/project"
+    argv = [str(launcher), "resume", "-C", root, "--", session_id] if session_id else [str(launcher), "-C", root]
+    print("\nPlugin installed. Audit/connect the exact project tooling before automatic continuation.")
+    if not launcher.is_file():
+        print("Install Longrun first: https://github.com/woffko/codex-mcp-longrun#install-from-scratch")
+    if project_root is None:
+        print("Replace /absolute/path/to/project with the exact enrolled project root.")
+    print("After connecting the project, close the current Codex process and launch through the bridge:")
+    print(shlex.join(argv))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -85,9 +100,22 @@ def main() -> None:
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--install", action="store_true")
+    parser.add_argument("--project-root", type=Path, help="Target project for the post-install bridge command; never inferred from the plugin checkout.")
+    parser.add_argument("--session-id", default=os.environ.get("CODEX_THREAD_ID") or os.environ.get("CODEX_SESSION_ID"),
+                        help="Existing session to resume; otherwise print a new-session command.")
     args = parser.parse_args()
     if args.dry_run and args.install:
         parser.error("--dry-run and --install are mutually exclusive")
+    project_root = None
+    if args.project_root is not None:
+        requested = args.project_root.expanduser().resolve()
+        found = subprocess.run(["git", "-C", str(requested), "rev-parse", "--show-toplevel"],
+                               capture_output=True, text=True, timeout=5, check=False)
+        if found.returncode:
+            parser.error("--project-root must identify a Git project")
+        project_root = Path(found.stdout.strip()).resolve()
+        if project_root in {Path.home().resolve(), Path.home().resolve().parent, Path("/")}:
+            parser.error("--project-root must be an exact project, not a broad parent")
     plugin_root = Path(__file__).resolve().parents[1]
     expected_root = (Path.home() / "plugins" / PLUGIN_NAME).resolve()
     if plugin_root != expected_root:
@@ -119,6 +147,7 @@ def main() -> None:
         ["codex", "plugin", "add", f"{PLUGIN_NAME}@{updated['name']}"],
         check=True,
     )
+    print_launch_handoff(project_root, args.session_id)
 
 
 if __name__ == "__main__":

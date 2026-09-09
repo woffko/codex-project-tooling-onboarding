@@ -93,6 +93,11 @@ non-project roots.
 - With `codex-longrun` plus an active Goal, use one `start_job` with
   `wake_policy="goal"`, require `automatic_wakeup=true`, end the turn, and call
   `get_job` once only after automatic continuation. Never poll.
+- Without a pending Goal, require `bridge_reachable=true` and
+  `session_wakeup_supported=true`, then use `wake_policy="session"` in its own
+  executor call. The coordinator interrupts the held call and records a startup
+  receipt. Do not mistake that interruption for a failed launch or submit a
+  duplicate. Never create or reactivate a Goal merely to obtain wakeup.
 
 ### Trust and local files
 
@@ -109,13 +114,31 @@ Run the audit again. Report exact runtime evidence, anything intentionally
 unverified, local ignored files, and whether the portable manifest remains
 untracked. Tool/config changes require a new Codex process.
 
-For a known thread, provide this copy-paste command with the real values:
+Always include a copy-paste bridge launch command in the final response after
+authorized installation or project connection. The fully-connected silence rule
+applies to unsolicited hook offers, not this requested completion handoff.
+Use the audit's shell-quoted `launch_command`; pass the actual `--session-id`
+when known (the CLI also reads `CODEX_THREAD_ID`/`CODEX_SESSION_ID`). Its
+`resume_command` resumes that thread and `start_command` starts a new session.
+Do not substitute plain `codex resume`, which does not start the bridge.
+
+For a known thread, the command has this shape with actual, shell-quoted values:
 
 ```bash
 "$HOME/.local/share/codex-longrun-mcp/.venv/bin/codex-longrun" \
-  resume -C /absolute/project/root \
-  SESSION_ID
+  resume -C "/absolute/project/root" -- "SESSION_ID"
 ```
+
+Without a known thread ID, provide:
+
+```bash
+"$HOME/.local/share/codex-longrun-mcp/.venv/bin/codex-longrun" \
+  -C "/absolute/project/root"
+```
+
+After plugin installation alone, explain that project tooling still needs to be
+audited/connected. If the project root is not selected, label the command as a
+template; never choose the plugin checkout or home directory as the user's project.
 
 Do not launch a second writer for an already active thread. If resume reports
 an active writer, inspect the exact process tree and active Longrun jobs before
